@@ -1,0 +1,171 @@
+# Runs on every push/PR to main. Feature branches and PRs only run the
+# test job - nothing touches AWS until code is actually on main.
+#
+# The build/test/scan/push/deploy LOGIC lives in scripts/ci/*.sh and
+# scripts/notify-slack.sh, shared with Jenkinsfile, so both pipelines do
+# exactly the same thing instead of quietly drifting apart.
+
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+    # Skip re-triggering when the only change is the image tag CI itself
+    # just committed in update-image-tag - otherwise every deploy would
+    # kick off a second, pointless run.
+    paths-ignore:
+      - "helm/employee-task/values.yaml"
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # Lint + Unit Tests
+  # ────────────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        app:
+          - backend
+          - frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Run checks
+        run: |
+          bash ./scripts/ci/run-checks.sh ${{ matrix.app }}
+
+      - name: Notify Slack on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          bash ./scripts/notify-slack.sh \
+            failure CI "${{ matrix.app }}" \
+            "run-checks.sh failed — see the Actions log"
+
+  # ────────────────────────────────────────────────────────────────
+  # Secret Scan
+  # ────────────────────────────────────────────────────────────────
+  secrets-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ────────────────────────────────────────────────────────────────
+  # Build, Scan & Push Images
+  # ────────────────────────────────────────────────────────────────
+  build-and-push:
+    needs:
+      - test
+      - secrets-scan
+
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build an image tag from the commit
+        id: tag
+        run: |
+          echo "image_tag=dev-$(git rev-parse --short HEAD)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+          trivy --version
+
+      - name: Build, Scan & Push Images
+        run: |
+          chmod +x ./scripts/ci/build-scan-push.sh
+          ./scripts/ci/build-scan-push.sh \
+            "${ECR_REGISTRY}" \
+            "${{ steps.tag.outputs.image_tag }}"
+
+      - name: Notify Slack on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          chmod +x ./scripts/notify-slack.sh
+          ./scripts/notify-slack.sh \
+            failure CI \
+            dev \
+            "build/scan/push failed — see the Actions log"
+
+  # ────────────────────────────────────────────────────────────────
+  # Update the image tag in this repo's own Helm chart - ArgoCD
+  # (employee-task-gitops) watches this repo directly, so a normal commit
+  # here is the whole GitOps update, no second repo involved.
+  # ────────────────────────────────────────────────────────────────
+  update-image-tag:
+    needs: build-and-push
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update image tag in the Helm chart
+        run: |
+          chmod +x ./scripts/ci/update-image-tag.sh
+          ./scripts/ci/update-image-tag.sh "${{ needs.build-and-push.outputs.image_tag }}"
+
+      - name: Notify Slack
+        if: always()
+        continue-on-error: true
+        run: |
+          if [[ "${{ job.status }}" == "success" ]]; then
+            bash ./scripts/notify-slack.sh \
+              success Deploy dev \
+              "image ${{ needs.build-and-push.outputs.image_tag }}"
+          else
+            bash ./scripts/notify-slack.sh \
+              failure Deploy dev \
+              "updating the Helm chart's image tag failed — see the Actions log"
+          fi

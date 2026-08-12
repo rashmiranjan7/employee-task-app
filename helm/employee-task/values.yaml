@@ -1,0 +1,68 @@
+# Everything the chart needs to deploy, in one file - no separate
+# per-environment overlay repo. CI updates backend.image.tag /
+# frontend.image.tag right here on every build (see
+# scripts/ci/update-image-tag.sh) and ArgoCD (in employee-task-gitops)
+# picks the change up automatically.
+
+image:
+  registry: "" # set once during setup - terraform output ecr_repository_urls, minus the repo name
+  pullPolicy: IfNotPresent
+
+# Name of the Kubernetes Secret this chart reads DB_HOST/DB_USER/DB_PASSWORD/
+# JWT_SECRET/JWT_REFRESH_SECRET from. Created by Terraform
+# (employee-task-infra/terraform/main.tf), not by this chart, so nothing
+# sensitive is ever committed to Git.
+existingSecretName: employee-task-secrets
+
+backend:
+  replicaCount: 1
+  image:
+    repository: employee-task-backend
+    tag: "unset" # set by CI on every deploy
+  port: 5000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  hpa:
+    enabled: false # one replica is enough for a dev/demo environment
+    minReplicas: 1
+    maxReplicas: 3
+    cpuUtilization: 70
+  env:
+    NODE_ENV: development
+    LOG_LEVEL: debug
+    RATE_LIMIT_MAX: "500"
+    DB_POOL_MAX: "5"
+    DB_POOL_MIN: "1"
+    JWT_EXPIRES_IN: "8h"
+    JWT_REFRESH_EXPIRES_IN: "7d"
+
+frontend:
+  replicaCount: 1
+  image:
+    repository: employee-task-frontend
+    tag: "unset" # set by CI on every deploy
+  port: 8080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+ingress:
+  enabled: true
+  class: alb
+  host: "" # set once during setup - the one hostname the app is reachable on
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # listen-ports / ssl-redirect are set conditionally in templates/ingress.yaml
+    # based on whether tls.certificateArn is set - see that file.
+  tls:
+    certificateArn: "" # set once during setup - terraform output acm_certificate_arn
