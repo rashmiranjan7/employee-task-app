@@ -5,15 +5,13 @@
 # picks the change up automatically.
 
 image:
-  registry: "" # set once during setup - terraform output ecr_repository_urls, minus the repo name
+  registry: "897074277336.dkr.ecr.us-east-1.amazonaws.com" # set once during setup - terraform output ecr_repository_urls, minus the repo name
   pullPolicy: IfNotPresent
-
 # Name of the Kubernetes Secret this chart reads DB_HOST/DB_USER/DB_PASSWORD/
 # JWT_SECRET/JWT_REFRESH_SECRET from. Created by Terraform
 # (employee-task-infra/terraform/main.tf), not by this chart, so nothing
 # sensitive is ever committed to Git.
 existingSecretName: employee-task-secrets
-
 backend:
   replicaCount: 1
   image:
@@ -40,7 +38,6 @@ backend:
     DB_POOL_MIN: "1"
     JWT_EXPIRES_IN: "8h"
     JWT_REFRESH_EXPIRES_IN: "7d"
-
 frontend:
   replicaCount: 1
   image:
@@ -54,15 +51,14 @@ frontend:
     limits:
       cpu: 200m
       memory: 128Mi
-
 ingress:
   enabled: true
   class: alb
-  host: "" # set once during setup - the one hostname the app is reachable on
+  host: "rashmidevops.xyz" # set once during setup - the one hostname the app is reachable on
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     # listen-ports / ssl-redirect are set conditionally in templates/ingress.yaml
     # based on whether tls.certificateArn is set - see that file.
   tls:
-    certificateArn: "" # set once during setup - terraform output acm_certificate_arn
+    certificateArn: "arn:aws:acm:us-east-1:897074277336:certificate/f6895691-d9e2-45c6-a173-f9282a3b1110" # set once during setup - terraform output acm_certificate_arn
