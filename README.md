@@ -13,8 +13,8 @@ This is one of **3 repos**, each with one clear job:
 | Repo | Owns |
 |---|---|
 | **employee-task-app** (this repo) | Application source, the Helm chart (code + default values in one place), CI/CD pipelines, local dev stack, docs |
-| [employee-task-gitops](https://github.com/rashmiranjandevops/employee-task-gitops) | The one ArgoCD Application that deploys this repo's chart |
-| [employee-task-infra](https://github.com/rashmiranjandevops/employee-task-infra) | Terraform — everything CI/CD and the app run on top of |
+| [employee-task-gitops](https://github.com/rashmiranjan7/employee-task-gitops) | The one ArgoCD Application that deploys this repo's chart |
+| [employee-task-infra](https://github.com/rashmiranjan7/employee-task-infra) | Terraform — everything CI/CD and the app run on top of |
 
 ## Architecture diagram
 
@@ -67,7 +67,7 @@ React · Node.js/Express · MySQL · Docker · Docker Compose · Terraform · AW
 ## Setup instructions (quick start — local only)
 
 ```bash
-git clone https://github.com/rashmiranjandevops/employee-task-app.git
+git clone https://github.com/rashmiranjan7/employee-task-app.git
 cd employee-task-app
 
 cp docker/.env.example docker/.env                                # fill in DB/Grafana passwords
