@@ -16,7 +16,7 @@ backend:
   replicaCount: 1
   image:
     repository: employee-task-backend
-    tag: "unset" # set by CI on every deploy
+    tag: "dev-18deb15-18" # set by CI on every deploy
   port: 5000
   resources:
     requests:
@@ -42,7 +42,7 @@ frontend:
   replicaCount: 1
   image:
     repository: employee-task-frontend
-    tag: "unset" # set by CI on every deploy
+    tag: "dev-18deb15-18" # set by CI on every deploy
   port: 8080
   resources:
     requests:
