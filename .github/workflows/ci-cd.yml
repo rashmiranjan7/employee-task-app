@@ -27,9 +27,19 @@ permissions:
   id-token: write
   contents: write
 
+# Only one run per branch at a time - if a new push comes in while a run
+# is still going, GitHub cancels the older one instead of letting both
+# race to push the same image-tag commit at the end.
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+  # Fallback defaults after "||" in case the vars context doesn't resolve
+  # for some reason - these are safe to hardcode since this project only
+  # ever runs in one account/region.
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY || '897074277336.dkr.ecr.us-east-1.amazonaws.com' }}
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
 jobs:

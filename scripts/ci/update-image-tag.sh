@@ -15,6 +15,7 @@ set -euo pipefail
 
 IMAGE_TAG="${1:?Usage: $0 <image-tag>}"
 VALUES_FILE="helm/employee-task/values.yaml"
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 
 if [[ ! -f "${VALUES_FILE}" ]]; then
   echo "ERROR: ${VALUES_FILE} does not exist — run this from the repo root" >&2
@@ -38,6 +39,24 @@ fi
 # [skip ci] plus the workflow's own paths-ignore on values.yaml both guard
 # against this commit re-triggering another CI run.
 git commit -m "chore: deploy ${IMAGE_TAG} [skip ci]"
-git push origin HEAD
 
-echo "==> Done — ArgoCD will pick this up on its next sync."
+# The remote can move between this job's checkout and this push (e.g. two
+# workflow runs overlapping, or someone pushing manually at the same time),
+# which makes a plain `git push` get rejected as non-fast-forward. Retry a
+# few times: fetch the latest, rebase our one commit on top of it, push
+# again. Our commit only ever touches two yq-set fields in one file, so a
+# rebase here is always trivial - there's nothing to meaningfully conflict
+# with even if the remote moved.
+for attempt in 1 2 3 4 5; do
+  if git push origin "HEAD:${BRANCH}"; then
+    echo "==> Done — ArgoCD will pick this up on its next sync."
+    exit 0
+  fi
+  echo "==> Push rejected (attempt ${attempt}/5) — remote moved, rebasing and retrying..."
+  git fetch origin "${BRANCH}"
+  git rebase "origin/${BRANCH}"
+  sleep $((attempt * 2))
+done
+
+echo "ERROR: could not push after 5 attempts — remote kept moving faster than we could rebase." >&2
+exit 1
