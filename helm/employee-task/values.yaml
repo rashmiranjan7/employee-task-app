@@ -61,4 +61,4 @@ ingress:
     # listen-ports / ssl-redirect are set conditionally in templates/ingress.yaml
     # based on whether tls.certificateArn is set - see that file.
   tls:
-    certificateArn: "arn:aws:acm:us-east-1:897074277336:certificate/b5143515-722f-4873-94d9-4bdc26c34d97" # set once during setup - terraform output acm_certificate_arn
+    certificateArn: "arn:aws:acm:us-east-1:897074277336:certificate/c4d67154-ff29-4408-9dc7-f54bdfd68994" # set once during setup - terraform output acm_certificate_arn
