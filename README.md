@@ -1,74 +1,110 @@
-# Employee Task Tracker — GitOps Repository
+# Employee Task Tracker — App Repository
 
-This repo tells ArgoCD what should be running in the Kubernetes cluster. ArgoCD watches this repo and keeps the cluster matching whatever is committed here — that's what "GitOps" means: Git is the single source of truth for what's deployed.
+This is a task management web app. Employees can sign up, log in, and create/assign/track tasks. I built this as a personal project to practice real DevOps skills — not just the app code, but everything around it: containers, CI/CD, Kubernetes, and monitoring.
+
+**Live app:** https://rashmidevops.xyz
 
 ## Part of a 3-repo project
 
+I split this project into 3 repos on purpose, so each repo has one clear job — the same way a real team would split app code, infrastructure, and deployment config.
+
 | Repo | What it does |
 |---|---|
-| [employee-task-app](https://github.com/rashmiranjanDevOps/employee-task-app) | The app code, the Helm chart, and CI/CD — start here for full setup steps |
-| [employee-task-infra](https://github.com/rashmiranjanDevOps/employee-task-infra) | Terraform — everything CI/CD and the app run on top of |
-| **employee-task-gitops** (this one) | The ArgoCD Application file that deploys the app |
+| **employee-task-app** (this one) | The app itself, the Helm chart, and both CI/CD pipelines |
+| [employee-task-infra](https://github.com/rashmiranjanDevOps/employee-task-infra) | Terraform — builds all the AWS infrastructure |
+| [employee-task-gitops](https://github.com/rashmiranjanDevOps/employee-task-gitops) | The ArgoCD file that tells Kubernetes what to run |
 
-## Why this repo only has one file
+## How it all connects
 
-This might look too small at first — it's on purpose. Everything that changes when the *app* changes (a new environment variable, a new port, a new probe) lives in `employee-task-app`'s Helm chart, right next to the code change that needs it. This repo only holds the ArgoCD `Application` definition that tells ArgoCD *where* to look. It almost never changes once it's set up.
-
-I kept it as a separate repo (instead of just putting this file inside `employee-task-app`) because that's the standard GitOps pattern: it keeps "what is my app" separate from "what is currently deployed," which matters more once a project has multiple environments. For this project it's mostly a demonstration of the pattern — with only one environment, the practical benefit is small today, but it's how this would scale to a dev/staging/prod setup later.
+1. I push code to `main` on GitHub.
+2. CI runs (see "Two pipelines" below): it lints, tests, scans for secrets, builds Docker images, scans the images for vulnerabilities with Trivy, then pushes them to AWS ECR.
+3. CI then updates the image tag in this repo's Helm chart and commits that change.
+4. ArgoCD (running in the cluster) notices the change and automatically deploys the new version to EKS.
+5. Prometheus scrapes metrics from the backend, Grafana shows them on a dashboard, and Alertmanager sends alerts to Slack if something's wrong.
 
 ## Folder structure
 
 ```
-apps/
-  dev-application.yaml   The one ArgoCD Application (auto-sync enabled)
+backend/              Node.js + Express API (auth, tasks, users, audit log)
+frontend/             React app (built with Vite)
+helm/employee-task/   The Helm chart — templates + default values, one place
+docker/               docker-compose.yml, for running everything locally
+monitoring/           Prometheus, Grafana, and Alertmanager config
+scripts/
+  ci/                 Shared scripts both pipelines call (test, build, scan, push)
+  rollback.sh         Undo a bad deploy
+  verify-deployment.sh  Check a deploy actually worked
+  notify-slack.sh     Sends CI/deploy messages to Slack
+.github/workflows/    CI/CD pipeline #1 (GitHub Actions)
+Jenkinsfile            CI/CD pipeline #2 (Jenkins)
 ```
 
-There's no Helm chart and no values file in this repo — both live in `employee-task-app`.
+## Why two CI/CD pipelines?
+
+I kept both GitHub Actions and Jenkins on purpose — as practice, so I understand both tools, not because the project needs two. In real day-to-day use I only run one at a time (see the note in the Jenkinsfile and workflow file). Both pipelines call the exact same scripts in `scripts/ci/`, so they do the same job the same way — nothing is duplicated in logic, only in "which tool triggers it."
 
 ## Tech stack
 
-ArgoCD, Kubernetes (as the deploy target)
+- **Backend:** Node.js, Express, Sequelize (MySQL), JWT auth
+- **Frontend:** React, Vite, Tailwind CSS
+- **Containers:** Docker, Docker Compose (for local dev)
+- **CI/CD:** GitHub Actions and Jenkins (same scripts, either one works)
+- **Security scanning:** Trivy (container images), Gitleaks (secrets in code), npm audit
+- **Deployment:** Helm chart, ArgoCD (GitOps)
+- **Monitoring:** Prometheus, Grafana, Alertmanager, Slack notifications
 
-## How it works
-
-The `Application` in `apps/dev-application.yaml` points at one place: the Helm chart inside `employee-task-app` (`helm/employee-task/`), which already has its own `values.yaml`. When CI in `employee-task-app` finishes building a new image, it updates the image tag directly in that `values.yaml` and commits it. ArgoCD notices the change and rolls it out — usually within about 3 minutes. This repo's own file barely ever needs to change for a normal deploy.
-
-## Setting it up
-
-This repo doesn't need its own setup — it needs `employee-task-infra`'s Terraform applied and ArgoCD installed in the cluster first. Full order across all 3 repos: `employee-task-app`'s [SETUP.md](https://github.com/rashmiranjanDevOps/employee-task-app/blob/main/SETUP.md).
-
-Once ArgoCD is installed:
+## Running it locally
 
 ```bash
-kubectl apply -f apps/dev-application.yaml
+git clone https://github.com/rashmiranjanDevOps/employee-task-app.git
+cd employee-task-app
+
+cp docker/.env.example docker/.env
+cp backend/.env.development.example backend/.env.development
+# open both files and fill in a DB password and a JWT secret
+
+cd docker
+docker compose up --build
 ```
 
-## Deploying
+Once it's running:
+- App frontend: http://localhost:3000
+- Backend API: http://localhost:5000
+- Grafana: http://localhost:3001
+- Prometheus: http://localhost:9090
 
-You don't deploy anything from this repo directly. CI in `employee-task-app` does the deploy by updating the image tag in that repo's `helm/employee-task/values.yaml`. ArgoCD auto-syncs that change on its own.
+For the full AWS setup across all 3 repos, see [SETUP.md](./SETUP.md).
 
-## Rolling back
+## How a deploy works
+
+I don't deploy by hand. I push to `main`, and CI does the rest — build, test, scan, push the image, and update the image tag in the Helm chart. ArgoCD then rolls it out to the cluster automatically, usually within a few minutes.
+
+## Rolling back a bad deploy
 
 ```bash
-# run this from employee-task-app
 ./scripts/rollback.sh
 ```
 
-This reverts `helm/employee-task/values.yaml` (in the app repo) to its previous Git commit and lets ArgoCD sync to that. It's a Git revert, not `argocd app rollback` — an `argocd app rollback` would change the cluster without changing Git, and the very next auto-sync would silently undo it.
+This reverts the Helm chart's `values.yaml` to the previous Git commit and lets ArgoCD sync to that. I do it this way (not `argocd app rollback`) because Git stays the single source of truth — if I rolled back only inside ArgoCD, the next auto-sync would just undo it.
+
+## What this costs to run
+
+This is a small, single-environment setup, not a production cluster, so I kept AWS costs low on purpose:
+- One EKS cluster with one small worker node (t3.medium)
+- One NAT Gateway shared by both subnets, instead of one per AZ (cheaper, but if that NAT's AZ has an outage, both private subnets lose internet access — an acceptable trade-off for a learning project)
+- One small RDS database (db.t3.micro), 1-day backup retention, no Multi-AZ
+- No extra AWS KMS key for encryption — RDS and EKS already encrypt data with AWS's own default key, so I didn't add a second key to manage
+
+Total cost is roughly $60–90/month while it's running (mostly EKS's control plane fee, the NAT Gateway, and the EC2 nodes). I tear it down with Terraform when I'm not actively working on it, to avoid paying for idle infrastructure.
 
 ## Troubleshooting
 
-| Problem | Likely cause |
-|---|---|
-| `Application` stuck `OutOfSync` | `syncPolicy.automated` is missing from `dev-application.yaml`, or the file was never applied |
-| `Application` shows `Unknown` health | A Helm rendering error — check it locally from `employee-task-app`: `helm template helm/employee-task` |
-| Image pull fails right after a deploy | The image tag CI wrote to `values.yaml` doesn't exist in ECR yet — check the CI run actually finished pushing the image |
+Common problems across all 3 repos, and the command to check each one: see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
 
-Full troubleshooting guide across all 3 repos: `employee-task-app`'s [TROUBLESHOOTING.md](https://github.com/rashmiranjanDevOps/employee-task-app/blob/main/TROUBLESHOOTING.md).
+## Tearing everything down
 
-## Deploying without CI or ArgoCD (manual, for testing)
+Full steps (has to be done in a specific order): see [SETUP.md](./SETUP.md#tearing-it-all-down).
 
-```bash
-# from employee-task-app
-helm template helm/employee-task | kubectl apply -f -
-```
+## Scope of this project
+
+This is a portfolio project. It runs one environment (dev), one hostname, and one small cluster — built so I could understand every part of it end to end, not to copy a large company's production setup.
